@@ -1,0 +1,20 @@
+# --- Environment and Credentials ---
+.env
+credentials.json
+token.json
+__pycache__/
+*.pyc
+
+# --- Local Data and Temporary Files ---
+temp_downloads/
+creatives/
+data_logs/
+docs_and_scripts/
+.DS_Store
+
+# --- Project Specific ---
+analyze_existing_sheet.py
+*.xlsx
+*.csv
+*.mp4
+*.mov
