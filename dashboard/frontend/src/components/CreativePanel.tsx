@@ -110,7 +110,7 @@ export function CreativePanel({ mediaMappings, pitchLevels, totalDurationSec, cr
             <table className="assets-table">
               <thead>
                 <tr>
-                  <th>File Name</th>
+                  <th>Nomenclature</th>
                   <th>Duration</th>
                   <th>Pitch</th>
                   <th>Language</th>
