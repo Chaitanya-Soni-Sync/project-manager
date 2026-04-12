@@ -1,10 +1,11 @@
-import { ArrowLeft, FolderOpen, Activity, Play, Calendar, FileText, BarChart2, Clock, Film, ListChecks, ScrollText } from 'lucide-react';
+import { ArrowLeft, FolderOpen, Activity, Play, Calendar, FileText, BarChart2, Film, ListChecks, ScrollText } from 'lucide-react';
 import type { CampaignDetail } from '../types';
 import { MetricsPanel } from './MetricsPanel';
 import { Timeline } from './Timeline';
 import { DetailLoader } from './Loader';
 import { CreativePanel } from './CreativePanel';
 import { MilestoneTracker } from './MilestoneTracker';
+import { ReportComparison } from './ReportComparison';
 
 interface DetailViewProps {
   detail: CampaignDetail | null;
@@ -198,6 +199,16 @@ export function DetailView({ detail, loading, onBack }: DetailViewProps) {
           creativeCount={detail.Creative_Count || ''}
         />
       </div>
+
+      {/* ══════════════════════════════════════════════════
+          ROW 2.5: Report Comparison (if multiple files exist)
+          ══════════════════════════════════════════════════ */}
+      {detail.All_Files_Data && detail.All_Files_Data.filter(f => f.name && (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.csv'))).length >= 2 && (
+        <ReportComparison 
+          productName={detail.Product_Name} 
+          files={detail.All_Files_Data} 
+        />
+      )}
 
       {/* ══════════════════════════════════════════════════
           ROW 3: Activity Log + Files Received

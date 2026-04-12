@@ -101,15 +101,17 @@ def process_single_email(msg_id):
                 # Attach source file info for logging
                 item['metrics'] = file_metrics
 
-        # 3. Campaign Workflow Management
-        process_campaign_email(msg_id, metrics=combined_metrics)
-        
         email_items = email_data['files']
         if not email_items:
             print(f"No file items found in message {msg_id}.")
+            process_campaign_email(msg_id, metrics=combined_metrics)
             mark_as_read(msg_id)
             return
-            
+
+from src.config import TEAM_DOMAIN
+
+...
+        onedrive_id_map = {}
         for item in email_items:
             try:
                 # 3. Handle File Download (if Drive link)
@@ -120,26 +122,41 @@ def process_single_email(msg_id):
                     item['name'] = drive_file['name']
 
                 # 4. Categorize & Upload to OneDrive
-                category = get_category_from_extension(item['name'])
                 product_name = email_data.get('product_name', 'General')
+                
+                # SPECIAL DETECTION: Analysis from Team to Client
+                is_team_file = TEAM_DOMAIN.lower() in email_data['sender'].lower()
+                is_excel = item['name'].lower().endswith(('.xlsx', '.xls', '.csv'))
+                
+                if is_team_file and is_excel:
+                    category = 'analysis'
+                else:
+                    category = get_category_from_extension(item['name'])
+                    
                 print(f"Uploading {item['name']} (Category: {category}) to OneDrive folder for {product_name}...")
                 
                 onedrive_response = upload_file_to_onedrive(item['path'], product_name, category)
-                onedrive_id = onedrive_response.get('id')
+                item['onedrive_id'] = onedrive_response.get('id')
+                onedrive_id_map[item['name']] = item['onedrive_id']
                 
                 # 5. Create Shareable Link
-                onedrive_link = create_share_link(onedrive_id)
+                onedrive_link = create_share_link(item['onedrive_id'])
+                item['onedrive_link'] = onedrive_link
                 print(f"Generated OneDrive Link: {onedrive_link}")
                 
                 # 6. Log Activity to Sheets
                 log_activity(
                     timestamp=timestamp,
-                    email_subject=item['subject'],
+                    email_subject=email_data['subject'],
                     file_name=item['name'],
                     category=category,
                     onedrive_link=onedrive_link,
                     status="Success"
                 )
+...
+        # 8. Final Campaign Lifecycle Sync
+        process_campaign_email(msg_id, metrics=combined_metrics, onedrive_ids=onedrive_id_map)
+        mark_as_read(msg_id)
                 
                 # 7. Cleanup Local File
                 if os.path.exists(item['path']):
@@ -157,6 +174,9 @@ def process_single_email(msg_id):
                     onedrive_link="N/A",
                     status=f"Failed: {str(e)}"
                 )
+
+        # 3. Campaign Workflow Management (using updated items)
+        process_campaign_email(msg_id, metrics=combined_metrics)
 
         # 8. Mark Email as Read
         mark_as_read(msg_id)

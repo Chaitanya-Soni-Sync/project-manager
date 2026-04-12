@@ -24,6 +24,21 @@ export interface FileEntry {
   time?: string;
   type?: string;
   path?: string;
+  onedrive_id?: string;
+  onedrive_link?: string;
+}
+
+export interface ReportSheet {
+  name: string;
+  rawData: any[][];
+}
+
+export interface ReportComparisonData {
+  onedrive_id: string;
+  filename: string;
+  time: string;
+  sheets: ReportSheet[];
+  error?: string;
 }
 
 export interface MetricEntry {

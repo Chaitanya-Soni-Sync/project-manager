@@ -57,7 +57,7 @@ def find_campaign_folder(product_name):
 def upload_file_to_onedrive(local_path, product_name, category):
     """
     Uploads a file to the correct campaign subfolder.
-    Categories: 'video' -> 'Original ocreative', 'data' -> '[Product] Data'
+    Categories: 'video' -> 'Original ocreative', 'data' -> 'Data_logs', 'analysis' -> 'Analysis_Deliverables'
     """
     access_token = get_ms_access_token()
     filename = os.path.basename(local_path)
@@ -66,7 +66,13 @@ def upload_file_to_onedrive(local_path, product_name, category):
     camp_id, camp_name = find_campaign_folder(product_name)
     
     # 2. Get/Create Category Subfolder
-    subfolder_name = "Original ocreative" if category == 'video' else f"Data_logs"
+    if category == 'video':
+        subfolder_name = "Original ocreative"
+    elif category == 'analysis':
+        subfolder_name = "Analysis_Deliverables"
+    else:
+        subfolder_name = "Data_logs"
+        
     subfolder_id = get_or_create_folder(subfolder_name, parent_id=camp_id)
     
     # 3. Upload

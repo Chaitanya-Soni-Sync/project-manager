@@ -1,38 +1,42 @@
 # Project Management Automation - Operational Guide
 
 ## Core Objective
-Automate the tracking and management of project-related media and data files received via email, focusing on the campaign lifecycle from initiation to analysis delivery.
+Automate the tracking, management, and reporting of cross-media campaigns (JioStar x Syncmedia). This system provides real-time visibility via a standalone dashboard and ensures systematic cloud storage and stakeholder alerting.
 
 ## Workflow Summary
-1.  **Fetch:** Polls Gmail every 15 minutes for emails matching `GMAIL_SEARCH_QUERY`.
-2.  **Extract & Isolate:** Uses **Gmail Thread ID** for strict campaign isolation to prevent data clashing.
-3.  **Identify:** Fuzzy-matches the email subject to the **`System_Campaign_Registry`** (Logging Spreadsheet) to identify the product and its tracking tab.
+1.  **Fetch & Filter:** Polls Gmail every 15 minutes for project-related emails.
+    *   **Date Constraint:** Only emails from **January 1, 2026**, onwards are processed.
+    *   **Domain Constraint:** Only emails from/to **`@jiostar.com`** or **`@syncmedia.io`** are analyzed.
+    *   **Client Communication Rule:** Strictly **purge internal-only threads** (Syncmedia-to-Syncmedia). A thread must involve at least one `@jiostar.com` address to be tracked as a campaign.
+2.  **Extract & Isolate:** Uses **Gmail Thread ID** for strict isolation.
+    *   **Consolidation Rule:** Variations like "Realme 16 Pro", "Realme P4", etc., must be unified into a single master **"Realme"** campaign.
+3.  **Identify:** Fuzzy-matches subjects to the **`System_Campaign_Registry`** to find the correct tracking tab and OneDrive location.
 4.  **Cloud Storage (OneDrive):**
     *   **Root:** `/Users/chaitanyasoni/Library/CloudStorage/OneDrive-Personal/JHS X SYNC`.
-    *   **Dynamic Matching:** Uses aggressive wildcard matching for existing folders (e.g., handles "Nevia" vs "Nivea", "Detol" vs "Dettol").
-    *   **Subfolders:** Creatives go to `Original ocreative/`; Logs go to `Data_logs/`.
-    *   **New Campaigns:** Automatically creates `JHS - [Product Name] X SYNC` if no match is found.
-5.  **Alerting & Communication:**
-    *   **Mandatory CC:** Both `nikhil@syncmedia.io` and `chaitanya@syncmedia.io` MUST be included in all automated notifications.
-    *   **Cumulative History:** Stakeholder emails must attach **all files** received throughout the thread's history.
+    *   **Structure:**
+        *   Creatives (`.mp4`/`.mov`) -> `[Campaign Folder]/Original ocreative/`
+        *   Client Logs (`.xlsx`/`.csv`) -> `[Campaign Folder]/Data_logs/`
+        *   Team Reports (from `@syncmedia.io`) -> `[Campaign Folder]/Analysis_Deliverables/`
+5.  **Alerting:** 
+    *   **Stakeholders:** Both `nikhil@syncmedia.io` and `chaitanya@syncmedia.io` must be notified of every key action.
+    *   **Cumulative Attachments:** Notification emails must include **all files** received throughout the entire thread's history.
 6.  **Reporting:** 
-    *   **Daily:** Summary of all processed items sent at `REPORT_TIME`.
-    *   **Weekly (Sunday 10:00 AM):** A comprehensive status summary of all active/pending campaigns sent to Nikhil.
-    *   **Analysis Reminders:** Sent to Chaitanya if analysis is not delivered within 3 days of data receipt.
+    *   **Daily:** General activity report at `REPORT_TIME`.
+    *   **Weekly (Sunday 10:00 AM):** Status summary of active campaigns sent to Nikhil.
+    *   **Reminders:** 3-day pending analysis alerts for Chaitanya.
 
 ## Technical Architecture
-- **Language:** Python 3.10+
-- **APIs:** Google Workspace (Gmail, Sheets, Drive), Microsoft Graph (OneDrive).
-- **Key Modules:**
-  - `src/campaign_manager.py`: Orchestrates lifecycle, thread isolation, and stakeholder notifications.
-  - `src/onedrive_client.py`: Manages dynamic folder routing and cloud uploads.
-  - `src/sheets_client.py`: Handles multi-spreadsheet management and the master registry.
+- **Backend (Python):** Orchestrates lifecycle, extraction, and OneDrive uploads.
+- **Dashboard (Node.js/React):** Standalone product in `dashboard/` for real-time visibility.
+- **Data Layers:**
+  - `Campaign_Tracking`: Thread-based milestone history.
+  - `Analysis_History`: Chronological log of every analysis file shared with the client.
+  - `Campaign_Metrics`: Structured data (Spots, Dates, Impressions) extracted from logs.
 
 ## Critical Mandates & Patterns
-- **Wildcard Metadata Search:** Always search for metadata columns (Media, Platform, Pitch, Duration) using keyword matching (e.g., "Media/Platform").
-- **Strict Thread Isolation:** Never merge data across different Gmail threads.
+- **Wildcard Metadata Search:** Always use keyword matching (`media`, `platform`, `asset`, `file name`) to adapt to varying sheet formats.
 - **Impression Extraction:** Prioritize numeric extraction from columns containing 'TAM', 'Imp', 'Mn', or 'YouTube'.
-- **OneDrive Sync:** All files must be moved to OneDrive immediately; local storage is strictly for temporary processing.
+- **Thread Security:** Never merge data across different Thread IDs unless explicitly instructed (e.g., Realme unification).
 
 ## 🖥 Campaign Visibility Dashboard
 A standalone web portal for the interacting team to view live campaign statuses, creatives, and metrics.

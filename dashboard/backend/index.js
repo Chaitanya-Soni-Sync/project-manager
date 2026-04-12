@@ -3,6 +3,8 @@ const { google } = require('googleapis');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const axios = require('axios');
+const xlsx = require('xlsx');
 
 dotenv.config();
 
@@ -213,13 +215,38 @@ app.get('/api/campaign/:productName', async (req, res) => {
             }
         });
 
-        // Deduplicate files by name
+        // deduplicate tracker files
         const filesSeen = new Set();
         allFilesData = allFilesData.filter(f => {
             if (!f.name || filesSeen.has(f.name)) return false;
             filesSeen.add(f.name);
             return true;
         });
+
+        // Pull missing files dynamically from Analysis_History tab!
+        try {
+            const hRes = await sheets.spreadsheets.values.get({
+                spreadsheetId: SHEET_ID, range: 'Analysis_History!A:G'
+            });
+            const hRows = rowsToObjects(hRes.data.values);
+            hRows.forEach(hr => {
+                if ((hr['Campaign_Name'] || '').toLowerCase().includes(decodedProduct.toLowerCase()) || decodedProduct.toLowerCase().includes((hr['Campaign_Name'] || '').toLowerCase())) {
+                    const fname = hr['File_Name'];
+                    if (fname && !filesSeen.has(fname)) {
+                        filesSeen.add(fname);
+                        allFilesData.push({
+                            name: fname,
+                            time: hr['Shared_Date'],
+                            sender: hr['Sender'],
+                            onedrive_link: hr['OneDrive_Link'],
+                            onedrive_id: hr['OneDrive_Link'] // pass Local link or actual link as ID bypass
+                        });
+                    }
+                }
+            });
+        } catch (e) {
+            console.error('Analysis_History error:', e.message);
+        }
 
         const lastStep = computeLastStep(parsedRows);
 
@@ -239,31 +266,42 @@ app.get('/api/campaign/:productName', async (req, res) => {
                 });
                 creatives = rowsToObjects(creativeRes.data.values);
 
-                // Compute aggregates
-                creatives.forEach(c => {
+                // Compute aggregates & normalize headers
+                const normalizedCreatives = creatives.map(c => {
+                    const lcObj = {};
+                    Object.keys(c).forEach(k => {
+                        lcObj[k.toLowerCase()] = c[k];
+                    });
+                    return lcObj;
+                });
+
+                normalizedCreatives.forEach(c => {
                     const dur = parseFloat(c['video duration'] || c['duration'] || '0');
                     if (!isNaN(dur)) totalDurationSec += dur;
                 });
 
                 // Unique pitch shift levels
                 pitchLevels = [...new Set(
-                    creatives.map(c => c['pitch_shift_levels'] || c['pitch'] || '')
+                    normalizedCreatives.map(c => c['pitch_shift_levels'] || c['pitch'] || '')
                         .filter(Boolean)
                 )];
 
                 // Media mapping: group creatives by Media → list of file names
                 const mediaMap = {};
-                creatives.forEach(c => {
-                    const media = c['Media'] || c['media'] || 'Unknown';
+                normalizedCreatives.forEach(c => {
+                    const filename = c['nomenclature'] || c['file name'] || c['file_name'] || c['creative'] || '';
+                    if (!filename) return; // Skip empty rows
+                    
+                    const media = c['media'] || c['platform'] || 'Unknown';
                     if (!mediaMap[media]) mediaMap[media] = [];
                     mediaMap[media].push({
-                        file: c['file_name'] || c['Nomenclature'] || '',
-                        duration: c['video duration'] || '',
-                        pitch: c['pitch_shift_levels'] || '0',
+                        file: filename,
+                        duration: c['video duration'] || c['duration'] || '',
+                        pitch: c['pitch_shift_levels'] || c['pitch'] || '0',
                         path: c['path'] || '',
-                        status: c['status'] || '',
+                        status: c['status'] || c['uploaded'] || '',
                         language: c['language'] || '',
-                        driveLink: c['Drive link'] || '',
+                        driveLink: c['drive link'] || '',
                     });
                 });
                 mediaMappings = Object.entries(mediaMap).map(([media, files]) => ({ media, files }));
@@ -307,14 +345,117 @@ app.get('/api/campaign/:productName', async (req, res) => {
             Media_Mappings: mediaMappings,
             Total_Duration_Sec: totalDurationSec,
 
-            // Metrics (future)
-            Metrics: [],
+            // Metrics (extracted dynamically)
+            Metrics: (() => {
+                const arr = [];
+                allFilesData.forEach(f => {
+                    if (f.metrics && Array.isArray(f.metrics.media_breakdown)) {
+                        f.metrics.media_breakdown.forEach(mb => {
+                            arr.push({
+                                Media_Platform: mb.media,
+                                Impressions: String(mb.val),
+                                LTV_Spots: String(f.metrics.ltv_spots || ''),
+                                Start_Date: f.metrics.start_date || '',
+                                End_Date: f.metrics.end_date || '',
+                            });
+                        });
+                    }
+                });
+                return arr;
+            })(),
         };
 
         res.json(response);
     } catch (error) {
         console.error('[/api/campaign]', error.message);
         res.status(500).json({ error: 'Failed to fetch campaign details', detail: error.message });
+    }
+});
+
+// ── GET /api/campaign/:productName/compare ──────────────────────────────────
+app.get('/api/campaign/:productName/compare', async (req, res) => {
+    try {
+        const fileIdsParam = req.query.ids; // Expecting a comma-separated list of onedrive_ids
+        
+        if (!fileIdsParam) {
+            return res.status(400).json({ error: 'Missing onedrive_ids parameter' });
+        }
+        const fileIds = fileIdsParam.split(',');
+        
+        if (!process.env.MS_ACCESS_TOKEN) {
+            return res.status(500).json({ error: 'MS_ACCESS_TOKEN not configured in backend' });
+        }
+
+        const reports = [];
+        const fs = require('fs');
+
+        for (const fileId of fileIds) {
+            if (!fileId) continue;
+            try {
+                let fileBuffer;
+                let filenameStr;
+                let modTime;
+
+                if (fileId.startsWith('Local:')) {
+                    // Server Local Path Fallback
+                    const cleanPath = fileId.replace('Local:', '').trim();
+                    const localPath = path.resolve(__dirname, '../../', cleanPath);
+                    if (!fs.existsSync(localPath)) throw new Error('Local file not found: ' + localPath);
+                    
+                    fileBuffer = fs.readFileSync(localPath);
+                    filenameStr = path.basename(localPath);
+                    modTime = fs.statSync(localPath).mtime.toISOString();
+                } else {
+                    // Regular OneDrive flow
+                    const metaUrl = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}`;
+                    const metaRes = await axios.get(metaUrl, {
+                        headers: { 'Authorization': `Bearer ${process.env.MS_ACCESS_TOKEN}` }
+                    });
+                    filenameStr = metaRes.data.name;
+                    modTime = metaRes.data.lastModifiedDateTime;
+
+                    const fileUrl = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`;
+                    const response = await axios.get(fileUrl, {
+                        headers: { 'Authorization': `Bearer ${process.env.MS_ACCESS_TOKEN}` },
+                        responseType: 'arraybuffer'
+                    });
+                    fileBuffer = response.data;
+                }
+
+                // Parse Excel buffer
+                const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
+                const sheets = [];
+
+                // 4. Process each sheet
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    if (rawData.length > 0) {
+                        sheets.push({ name: sheetName, rawData: rawData });
+                    }
+                });
+
+                reports.push({
+                    onedrive_id: fileId,
+                    name: filenameStr,
+                    time: modTime,
+                    sheets: sheets
+                });
+                
+            } catch (err) {
+                console.error(`Error processing file ${fileId}:`, err.message);
+                reports.push({ onedrive_id: fileId, error: err.message });
+            }
+        }
+
+        // Return ordered chronologically by time
+        reports.sort((a, b) => new Date(a.time) - new Date(b.time));
+        res.json(reports);
+
+    } catch (err) {
+        console.error('Error in compare endpoint:', err.message);
+        res.status(500).json({ error: 'Failed to generate comparison', detail: err.message });
     }
 });
 
