@@ -1,0 +1,134 @@
+/* ═══════════════════════════════════════════════════════════
+   CAMPAIGN VISIBILITY PORTAL — GLOBAL DESIGN SYSTEM
+   Dark mode, Inter font, CSS custom properties
+   ═══════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* ── Palette ── */
+  --bg-base:       #070b14;
+  --bg-surface:    #0d1526;
+  --bg-card:       #111d35;
+  --bg-card-hover: #152040;
+  --bg-input:      #0d1526;
+
+  --border:        rgba(99, 130, 201, 0.15);
+  --border-hover:  rgba(99, 130, 201, 0.4);
+
+  /* Indigo → Cyan brand gradient */
+  --accent-1:      #6366f1;
+  --accent-2:      #22d3ee;
+  --accent-grad:   linear-gradient(135deg, #6366f1 0%, #22d3ee 100%);
+
+  /* Status colors */
+  --green:         #10b981;
+  --green-bg:      rgba(16, 185, 129, 0.12);
+  --green-border:  rgba(16, 185, 129, 0.35);
+
+  --amber:         #f59e0b;
+  --amber-bg:      rgba(245, 158, 11, 0.12);
+  --amber-border:  rgba(245, 158, 11, 0.35);
+
+  --red:           #ef4444;
+  --red-bg:        rgba(239, 68, 68, 0.12);
+
+  --blue:          #3b82f6;
+  --blue-bg:       rgba(59, 130, 246, 0.12);
+  --cyan:          #22d3ee;
+  --cyan-bg:       rgba(34, 211, 238, 0.12);
+
+  /* Typography */
+  --text-primary:  #f0f4ff;
+  --text-secondary: #8b9fc0;
+  --text-muted:    #4d6080;
+  --font:          'Inter', system-ui, sans-serif;
+
+  /* Shadows */
+  --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md:     0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg:     0 20px 60px rgba(0, 0, 0, 0.6);
+  --shadow-glow:   0 0 30px rgba(99, 102, 241, 0.2);
+
+  /* Radii */
+  --radius-sm:     6px;
+  --radius-md:     12px;
+  --radius-lg:     16px;
+  --radius-xl:     24px;
+
+  /* Transitions */
+  --transition:    0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font);
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-1); }
+
+/* ── Selection ── */
+::selection {
+  background: rgba(99, 102, 241, 0.3);
+  color: var(--text-primary);
+}
+
+/* ── Keyframes ── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInFast {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.4); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes border-flow {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}

@@ -8,6 +8,7 @@ from src.config import NIKHIL_EMAIL, CHAITANYA_EMAIL, CAMPAIGN_TRACKING_SHEET_NA
 # Configuration
 CAMPAIGN_SHEET = CAMPAIGN_TRACKING_SHEET_NAME
 ACTIVITY_LOG_SHEET = ACTIVITY_LOG_SHEET_NAME
+METRICS_SHEET = "Campaign_Metrics"
 
 # Headers for the Logging Spreadsheet
 CAMPAIGN_HEADERS = [
@@ -15,9 +16,17 @@ CAMPAIGN_HEADERS = [
     "Creative_Count", "Last_Action", "Status", "All_Files_Data", "History_Log"
 ]
 
+METRICS_HEADERS = [
+    "Campaign_ID", "Media_Platform", "Impressions", "LTV_Spots", "Start_Date", "End_Date", "Data_Source_File", "Timestamp"
+]
+
 def initialize_sheets():
     if create_sheet_if_not_exists(CAMPAIGN_SHEET, spreadsheet_id=LOGGING_SHEET_ID):
         append_sheet_row(f"{CAMPAIGN_SHEET}!A1", CAMPAIGN_HEADERS, spreadsheet_id=LOGGING_SHEET_ID)
+    
+    if create_sheet_if_not_exists(METRICS_SHEET, spreadsheet_id=LOGGING_SHEET_ID):
+        append_sheet_row(f"{METRICS_SHEET}!A1", METRICS_HEADERS, spreadsheet_id=LOGGING_SHEET_ID)
+        
     create_sheet_if_not_exists(ACTIVITY_LOG_SHEET, spreadsheet_id=LOGGING_SHEET_ID)
 
 initialize_sheets()
@@ -82,15 +91,19 @@ def get_creative_info(file_name, product_name=None):
         print(f"Lookup Error: {e}")
     return {'pitch': "TBD", 'media': "TBD", 'duration': "TBD"}
 
-def process_campaign_email(msg_id, impressions="TBD"):
+def process_campaign_email(msg_id, metrics=None):
     """Main processing logic with strict Thread-based isolation."""
     email_data = parse_email_content(msg_id)
-    thread_id = email_data.get('threadId', msg_id) # Fallback to msg_id
+    thread_id = email_data.get('threadId', msg_id)
     subject = email_data['subject']
     product_name = extract_product_name(subject)
     sender = email_data['sender']
     body = email_data['body']
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Metrics Fallback
+    if not metrics:
+        metrics = {'total_impressions': "TBD", 'media_breakdown': [], 'ltv_spots': 0, 'start_date': "TBD", 'end_date': "TBD"}
 
     # Find row using Thread_ID for 100% isolation
     row_num, row_data = find_row_by_id(CAMPAIGN_SHEET, thread_id, id_column_index=1, spreadsheet_id=LOGGING_SHEET_ID)
@@ -113,13 +126,27 @@ def process_campaign_email(msg_id, impressions="TBD"):
                 'sender': sender, 'time': timestamp
             })
             new_files_count += 1
+            
+            # If this file has metrics, log them to Campaign_Metrics
+            if 'metrics' in f and f['metrics']['ltv_spots'] > 0:
+                for entry in f['metrics']['media_breakdown']:
+                    metric_row = [
+                        product_name, 
+                        entry['media'], 
+                        entry['val'], 
+                        f['metrics']['ltv_spots'], 
+                        f['metrics']['start_date'], 
+                        f['metrics']['end_date'], 
+                        f['name'], 
+                        timestamp
+                    ]
+                    append_sheet_row(METRICS_SHEET, metric_row, spreadsheet_id=LOGGING_SHEET_ID)
     
     current_log = f"[{timestamp}] Received email from {sender} with {new_files_count} new files."
     history_log.append(current_log)
 
     if not row_data:
         print(f"Creating New Isolation Thread for: {product_name} (ID: {thread_id})")
-        # [ID, ThreadID, Product, Start, Media, Count, LastAction, Status, Files, History]
         new_row = [product_name, thread_id, product_name, timestamp, "Detecting...", len(all_files), "Initiation", "Pending", json.dumps(all_files), json.dumps(history_log)]
         append_sheet_row(CAMPAIGN_SHEET, new_row, spreadsheet_id=LOGGING_SHEET_ID)
     else:
@@ -129,7 +156,6 @@ def process_campaign_email(msg_id, impressions="TBD"):
         row_data[8] = json.dumps(all_files)
         row_data[9] = json.dumps(history_log)
 
-        # Trigger Actions based on Isolated Signals
         if CLIENT_DOMAIN.lower() in sender.lower():
             if any(s in body.lower() for s in ["campaign is ended", "campaign ended"]):
                 print(f"Isolated Signal: Campaign Ended for {product_name}")
@@ -137,31 +163,44 @@ def process_campaign_email(msg_id, impressions="TBD"):
             
             if any(f['name'].lower().endswith(('.xlsx', '.csv')) for f in email_data['files']):
                 print(f"Isolated Signal: Data Received for {product_name}")
-                send_comprehensive_analysis_email(product_name, all_files, history_log, impressions)
+                send_comprehensive_analysis_email(product_name, all_files, history_log, metrics)
         
         update_sheet_row(f"{CAMPAIGN_SHEET}!A{row_num}:J{row_num}", row_data, spreadsheet_id=LOGGING_SHEET_ID)
 
-def send_comprehensive_analysis_email(product, files, history, impressions):
+def send_comprehensive_analysis_email(product, files, history, metrics):
     subject = f"COMPREHENSIVE DATA: Analysis Initiation for {product}"
     attachments = [f['path'] for f in files if f.get('path')]
     
-    # Table 1: Creatives (Filtered by Product Tab)
     creative_rows = ""
     media_list = set()
     for f in files:
         if f['name'].lower().endswith(('.mp4', '.mov')):
             info = get_creative_info(f['name'], product_name=product)
             creative_rows += f"<tr><td>{f['name']}</td><td>{info['pitch']}</td><td>{info['media']}</td><td>{info['duration']}</td></tr>"
-            if info['media'] != "TBD": media_list.add(info['media'])
+            if info['media'] != "TBD" and info['media'] != "N/A":
+                media_list.add(info['media'])
     
-    # Table 2: Campaign Milestone Timeline
-    history_rows = "".join([f"<li>{entry}</li>" for entry in history[-5:]]) # Show last 5 events
+    history_rows = "".join([f"<li>{entry}</li>" for entry in history[-5:]])
     
-    # Table 3: Media & Impressions Summary
+    # Granular Metrics Table
     summary_table = f"""
     <table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%;">
-        <tr style="background-color: #f2f2f2;"><th>Product</th><th>Detected Media</th><th>Impressions</th><th>Total Files Attached</th></tr>
-        <tr><td>{product}</td><td>{', '.join(media_list) if media_list else 'TBD'}</td><td>{impressions}</td><td>{len(files)}</td></tr>
+        <tr style="background-color: #f2f2f2;">
+            <th>Product</th>
+            <th>Media Platforms</th>
+            <th>Total Impressions</th>
+            <th>LTV Spots</th>
+            <th>Start Date</th>
+            <th>End Date</th>
+        </tr>
+        <tr>
+            <td>{product}</td>
+            <td>{', '.join(media_list) if media_list else 'TBD'}</td>
+            <td>{metrics['total_impressions']}</td>
+            <td>{metrics['ltv_spots']}</td>
+            <td>{metrics['start_date']}</td>
+            <td>{metrics['end_date']}</td>
+        </tr>
     </table>"""
 
     body_html = f"""
@@ -175,7 +214,7 @@ def send_comprehensive_analysis_email(product, files, history, impressions):
             {creative_rows if creative_rows else '<tr><td colspan="4">No video creatives detected in this thread.</td></tr>'}
         </table>
 
-        <h4>2. Campaign Summary</h4>
+        <h4>2. Campaign Summary & Granular Metrics</h4>
         {summary_table}
 
         <h4>3. Recent Milestones</h4>

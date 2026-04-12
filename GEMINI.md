@@ -34,6 +34,31 @@ Automate the tracking and management of project-related media and data files rec
 - **Impression Extraction:** Prioritize numeric extraction from columns containing 'TAM', 'Imp', 'Mn', or 'YouTube'.
 - **OneDrive Sync:** All files must be moved to OneDrive immediately; local storage is strictly for temporary processing.
 
+## 🖥 Campaign Visibility Dashboard
+A standalone web portal for the interacting team to view live campaign statuses, creatives, and metrics.
+
+### Architecture
+- **Location:** `dashboard/`
+- **Backend:** Node.js (Express) - Port 5001. Fetches data from Google Sheets.
+- **Frontend:** React (TypeScript + Vite) - Port 5173. Interactive UI with Vanilla CSS.
+
+### Key Metrics Tracked
+- **LTV Spots:** Calculated via total row count of client BARC logs.
+- **Date Range:** Extracted from min/max of the 'Date' column in data logs.
+- **Media breakdown:** Granular impression extraction per media platform.
+
+### How to Run Dashboard
+1. **Backend:**
+   ```bash
+   cd dashboard/backend
+   npm start
+   ```
+2. **Frontend:**
+   ```bash
+   cd dashboard/frontend
+   npm run dev
+   ```
+
 ## Configuration
 - `CREATIVE_TRACKING_SHEET_ID`: Source for creative metadata.
 - `LOGGING_SHEET_ID`: Dedicated spreadsheet for `Campaign_Tracking` and `Activity_Log`.

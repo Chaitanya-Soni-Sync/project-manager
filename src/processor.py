@@ -11,35 +11,59 @@ import pandas as pd
 
 def extract_impressions_from_file(file_path):
     """
-    Attempts to extract impression counts from Excel/CSV files.
-    Looks for keywords like TAM, Imp, Mn, YouTube, etc.
+    Attempts to extract granular metrics from Excel/CSV files.
+    Returns a dict with: total_impressions, media_breakdown, ltv_spots, start_date, end_date.
     """
+    metrics = {
+        'total_impressions': "TBD",
+        'media_breakdown': [],
+        'ltv_spots': 0,
+        'start_date': "TBD",
+        'end_date': "TBD"
+    }
+    
     try:
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path)
         else:
             df = pd.read_excel(file_path)
             
-        # Standardize column names
+        # 1. Standardize columns
         df.columns = [str(c).lower().strip() for c in df.columns]
         
-        # Look for impression columns
-        target_keywords = ['tam', 'imp', 'impression', 'mn', 'youtube', 'digital', 'spots']
-        found_cols = [c for c in df.columns if any(k in c for k in target_keywords)]
+        # 2. LTV Spots (Total Row Count)
+        metrics['ltv_spots'] = len(df)
         
-        if found_cols:
-            # For simplicity, if we find values, return a summary string
-            # In a real scenario, you might sum the values
-            total_sum = 0
-            for col in found_cols:
+        # 3. Start/End Dates (from 'date' column)
+        date_cols = [c for c in df.columns if 'date' in c]
+        if date_cols:
+            try:
+                # Convert to datetime, coerce errors to NaT
+                dates = pd.to_datetime(df[date_cols[0]], errors='coerce').dropna()
+                if not dates.empty:
+                    metrics['start_date'] = dates.min().strftime("%Y-%m-%d")
+                    metrics['end_date'] = dates.max().strftime("%Y-%m-%d")
+            except: pass
+
+        # 4. Structured Media Impressions
+        target_keywords = ['tam', 'imp', 'impression', 'mn', 'youtube', 'digital', 'spots']
+        total_sum = 0
+        for col in df.columns:
+            if any(k in col for k in target_keywords):
                 try:
-                    total_sum += pd.to_numeric(df[col], errors='coerce').sum()
-                except:
-                    continue
-            return f"{total_sum} (extracted from {', '.join(found_cols)})"
+                    val = pd.to_numeric(df[col], errors='coerce').sum()
+                    if val > 0:
+                        metrics['media_breakdown'].append({'media': col, 'val': val})
+                        total_sum += val
+                except: continue
+        
+        if total_sum > 0:
+            metrics['total_impressions'] = str(total_sum)
+            
     except Exception as e:
-        print(f"Failed to extract impressions from {file_path}: {e}")
-    return "TBD"
+        print(f"Failed to extract structured metrics from {file_path}: {e}")
+        
+    return metrics
 
 def process_single_email(msg_id):
     """Processes a single email: extracts, downloads, uploads, logs, and manages campaigns."""
@@ -50,19 +74,35 @@ def process_single_email(msg_id):
         print(f"[{timestamp}] Processing message ID: {msg_id}")
         email_data = parse_email_content(msg_id)
         
-        # 2. Pre-process files for impressions if data email
-        impressions = "TBD"
+        # 2. Pre-process files for metrics
+        combined_metrics = {
+            'total_impressions': "TBD",
+            'media_breakdown': [],
+            'ltv_spots': 0,
+            'start_date': "TBD",
+            'end_date': "TBD"
+        }
+        
         email_items = email_data['files']
         for item in email_items:
             if item['type'] == 'attachment' and item['name'].lower().endswith(('.xlsx', '.csv')):
-                # We need to read it before it might be deleted or moved
-                # But it's already saved to TEMP_DOWNLOAD_DIR by parse_email_content
-                ext_imp = extract_impressions_from_file(item['path'])
-                if ext_imp != "TBD":
-                    impressions = ext_imp
+                file_metrics = extract_impressions_from_file(item['path'])
+                
+                # Merge logic (take values if better than TBD)
+                if file_metrics['total_impressions'] != "TBD":
+                    combined_metrics['total_impressions'] = file_metrics['total_impressions']
+                combined_metrics['media_breakdown'].extend(file_metrics['media_breakdown'])
+                combined_metrics['ltv_spots'] += file_metrics['ltv_spots']
+                if file_metrics['start_date'] != "TBD":
+                    combined_metrics['start_date'] = file_metrics['start_date']
+                if file_metrics['end_date'] != "TBD":
+                    combined_metrics['end_date'] = file_metrics['end_date']
+                
+                # Attach source file info for logging
+                item['metrics'] = file_metrics
 
         # 3. Campaign Workflow Management
-        process_campaign_email(email_data, impressions=impressions)
+        process_campaign_email(msg_id, metrics=combined_metrics)
         
         email_items = email_data['files']
         if not email_items:
