@@ -57,6 +57,35 @@ python3 main.py
 - `src/sheets_client.py`: Google Sheets integration and Registry management.
 - `src/processor.py`: Main processing loop and impression extraction.
 - `main.py`: Entry point and scheduler.
+- `dashboard/`: Campaign Visibility Dashboard (React Frontend + Node.js API).
+
+## 📊 Campaign Visibility Dashboard
+A full-stack web portal for stakeholders to get a live, visually rich overview of all tracked campaigns, creatives, and metrics. 
+
+### Features
+- **Live Sync**: Pulls real-time states and action logs directly from the active Google Sheets. 
+- **Deep-Dive Views**: Click on any campaign to see milestone trackers, media breakdowns, and extracted pitch variants.
+- **Dynamic KPIs**: Aggregates total delivered/pending metrics and total creative durations.
+- **Dark Mode Aesthetics**: Built with premium CSS layout and glassmorphism.
+
+### How to Run the Dashboard
+The dashboard uses an Express API to connect to Google Sheets using the same OAuth credentials as the automation script.
+
+1. **Start the Backend API (Port 5001)**
+   ```bash
+   cd dashboard/backend
+   npm install
+   npm start
+   ```
+
+2. **Start the Frontend UI (Port 5173)**
+   ```bash
+   cd dashboard/frontend
+   npm install
+   npm run dev
+   ```
+
+Access the dashboard at **http://localhost:5173**.
 
 ## 📝 Logging
 All system actions are logged in the `Activity_Log` tab of your **Logging Spreadsheet**. The current status of every campaign is maintained in the `System_Campaign_Registry` tab.
