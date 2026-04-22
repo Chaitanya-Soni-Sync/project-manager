@@ -76,7 +76,7 @@ def upload_file_to_onedrive(local_path, product_name, category):
     subfolder_id = get_or_create_folder(subfolder_name, parent_id=camp_id)
     
     # 3. Upload
-    upload_url = f"{GRAPH_API_ENDPOINT}/me/drive/items/{subfolder_id}:/{filename}:/content?@microsoft.graph.conflictBehavior=rename"
+    upload_url = f"{GRAPH_API_ENDPOINT}/me/drive/items/{subfolder_id}:/{filename}:/content"
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/octet-stream'
@@ -119,6 +119,20 @@ def create_share_link(item_id):
         return response.json().get('link', {}).get('webUrl')
     else:
         raise Exception(f"Failed to create share link: {response.text}")
+
+def download_file_from_onedrive(item_id, destination_path):
+    """Downloads a file from OneDrive given its item ID."""
+    access_token = get_ms_access_token()
+    url = f"{GRAPH_API_ENDPOINT}/me/drive/items/{item_id}/content"
+    headers = {'Authorization': f'Bearer {access_token}'}
+    
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        with open(destination_path, 'wb') as f:
+            f.write(response.content)
+        return destination_path
+    else:
+        raise Exception(f"Failed to download from OneDrive: {response.status_code} - {response.text}")
 
 def get_category_from_extension(filename):
     """Determines if a file is a 'video' or 'data' based on extension."""

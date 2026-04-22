@@ -1,4 +1,3 @@
-console.log('--- BACKEND STARTING ---');
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -7,15 +6,17 @@ const path = require('path');
 const axios = require('axios');
 const xlsx = require('xlsx');
 
-dotenv.config();
+// Load .env from automation_v2 or root
+dotenv.config({ path: path.join(__dirname, '../../.env') });
+if (!process.env.LOGGING_SHEET_ID) {
+    dotenv.config({ path: path.join(__dirname, '../../../.env') });
+}
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-console.log('--- Express app initialized ---');
 app.use(cors());
 app.use(express.json());
-console.log('--- Middleware configured ---');
 
 // ── Google Sheets Auth (OAuth2 with refresh token) ──────────────────────────
 const oauth2Client = new google.auth.OAuth2(
@@ -26,7 +27,6 @@ const oauth2Client = new google.auth.OAuth2(
 oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
 const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-console.log('--- Google Sheets client initialized ---');
 const SHEET_ID        = process.env.LOGGING_SHEET_ID;
 const CREATIVE_SHEET  = process.env.CREATIVE_TRACKING_SHEET_ID;
 
@@ -42,20 +42,11 @@ function rowsToObjects(rows) {
 }
 
 function safeParseJSON(str, fallback = []) {
-    try { return JSON.parse(str || JSON.stringify(fallback)); }
-    catch { return fallback; }
+    try { 
+        if (!str) return fallback;
+        return JSON.parse(str); 
+    } catch { return fallback; }
 }
-
-// NEW tracking row format (11+ columns):
-// [0]=Campaign_ID/Subject  [1]=Thread_ID  [2]=Product_Name  [3]=Client_Email_Date
-// [4]=Media_Platforms  [5]=Creative_Count  [6]=Last_Action  [7]=Status
-// [8]=All_Files_Data JSON  [9]=History_Log JSON  [10]=...
-//
-// OLD tracking row format (11 named columns):
-// Campaign_ID | Client_Email_Date | Media_Platforms | Creatives_List | Campaign_Live_Date
-// Campaign_End_Date | Nikhil_Email_Sent_Date | Data_Received_Date | Chaitanya_Email_Sent_Date
-// Analysis_Delivered_Status | Reminder_Sent_Date
-
 
 function isFuzzyMatch(a, b) {
     if (!a || !b) return false;
@@ -90,13 +81,13 @@ function parseTrackingRow(row) {
 }
 
 /** Determine last completed step for a campaign tracking row */
-function computeLastStep(rows) {
-    if (!rows || rows.length === 0) return 'Not Started';
-    // Pick row with most data or delivered status
-    const delivered = rows.find(r =>
+function computeLastStep(parsedRows) {
+    if (!parsedRows || parsedRows.length === 0) return 'Not Started';
+    // Pick row with most recent action or delivered status
+    const delivered = parsedRows.find(r =>
         (r['Status'] || '').toLowerCase() === 'delivered'
     );
-    const best = delivered || rows[rows.length - 1] || {};
+    const best = delivered || parsedRows[parsedRows.length - 1] || {};
 
     const status = (best['Status'] || '').toLowerCase();
     if (status === 'delivered') return 'Analysis Delivered ✅';
@@ -106,8 +97,6 @@ function computeLastStep(rows) {
     if (action.includes('data')) return 'Data Received';
     if (action === 'initiation') return 'Email Received — Pending Analysis';
 
-    if (best['Nikhil_Email_Sent_Date']) return 'Nikhil Notified';
-    if (best['Client_Email_Date']) return 'Email Received from Client';
     return 'Initiated';
 }
 
@@ -145,7 +134,6 @@ app.get('/api/summary', async (req, res) => {
 });
 
 // ── GET /api/activity ────────────────────────────────────────────────────────
-// Returns last 40 entries from Activity_Log (falls back to Campaign_Tracking timeline)
 app.get('/api/activity', async (req, res) => {
     try {
         const response = await sheets.spreadsheets.values.get({
@@ -160,7 +148,6 @@ app.get('/api/activity', async (req, res) => {
 });
 
 // ── GET /api/campaign/:productName ───────────────────────────────────────────
-// Full detail: registry info + tracking milestones + creative data + activity log
 app.get('/api/campaign/:productName', async (req, res) => {
     const { productName } = req.params;
     const decodedProduct = decodeURIComponent(productName);
@@ -178,7 +165,7 @@ app.get('/api/campaign/:productName', async (req, res) => {
             return res.status(404).json({ error: 'Campaign not found in registry' });
         }
 
-        // 2. Metrics & Tracking — find ALL rows for this product
+        // 2. Metrics & Tracking
         const trackRes = await sheets.spreadsheets.values.get({
             spreadsheetId: SHEET_ID, range: 'Campaign_Tracking!A:O',
         });
@@ -190,7 +177,6 @@ app.get('/api/campaign/:productName', async (req, res) => {
             return isFuzzyMatch(col0, decodedProduct) || isFuzzyMatch(col2, decodedProduct);
         });
 
-        // Parse all matched rows
         const parsedRows = matchedRaw.map(r => parseTrackingRow(r)).filter(Boolean);
 
         let historyLog = [];
@@ -204,7 +190,6 @@ app.get('/api/campaign/:productName', async (req, res) => {
             const files = Array.isArray(obj['All_Files_Data']) ? obj['All_Files_Data'] : [];
             allFilesData.push(...files);
 
-            // Extract Surgical Data from tracking columns 10/11/13
             if (obj.Actual_Live_Date && (!trackingDetail.Actual_Live_Date || trackingDetail.Actual_Live_Date === 'TBD')) {
                 const parsed = parseSurgicalValue(obj.Actual_Live_Date);
                 obj.Actual_Live_Date = parsed.date || obj.Actual_Live_Date;
@@ -223,7 +208,6 @@ app.get('/api/campaign/:productName', async (req, res) => {
             }
         });
 
-        // Deduplicate files
         const filesSeen = new Set();
         allFilesData = allFilesData.filter(f => {
             if (!f.name || filesSeen.has(f.name)) return false;
@@ -297,7 +281,6 @@ app.get('/api/campaign/:productName', async (req, res) => {
             }
         }
 
-        // 5. Build final response
         const response = {
             ...registryRow,
             ...trackingDetail,
@@ -307,10 +290,6 @@ app.get('/api/campaign/:productName', async (req, res) => {
             Media_Mappings: mediaMappings,
             Total_Duration_Sec: totalDurationSec,
             Metrics: (() => {
-                const metRes = { data: { values: [] } }; // Placeholder for actual metrics fetch if needed
-                const data = []; // Fallback empty
-                
-                // If metrics are found in tracking sheet, use them as primary
                 if (surgicalMetrics.impressions || surgicalMetrics.spots) {
                     return [{
                         Media_Platform: trackingDetail.Media_Platforms || 'Cross Media',
@@ -320,7 +299,7 @@ app.get('/api/campaign/:productName', async (req, res) => {
                         End_Date: trackingDetail.Actual_End_Date
                     }];
                 }
-                return data;
+                return [];
             })(),
         };
 
@@ -331,21 +310,13 @@ app.get('/api/campaign/:productName', async (req, res) => {
     }
 });
 
-
 // ── GET /api/campaign/:productName/compare ──────────────────────────────────
 app.get('/api/campaign/:productName/compare', async (req, res) => {
     try {
-        const fileIdsParam = req.query.ids; // Expecting a comma-separated list of onedrive_ids
+        const fileIdsParam = req.query.ids;
+        if (!fileIdsParam) return res.status(400).json({ error: 'Missing onedrive_ids parameter' });
         
-        if (!fileIdsParam) {
-            return res.status(400).json({ error: 'Missing onedrive_ids parameter' });
-        }
         const fileIds = fileIdsParam.split(',');
-        
-        if (!process.env.MS_ACCESS_TOKEN) {
-            return res.status(500).json({ error: 'MS_ACCESS_TOKEN not configured in backend' });
-        }
-
         const reports = [];
         const fs = require('fs');
 
@@ -357,7 +328,6 @@ app.get('/api/campaign/:productName/compare', async (req, res) => {
                 let modTime;
 
                 if (fileId.startsWith('Local:')) {
-                    // Server Local Path Fallback
                     const cleanPath = fileId.replace('Local:', '').trim();
                     const localPath = path.resolve(__dirname, '../../', cleanPath);
                     if (!fs.existsSync(localPath)) throw new Error('Local file not found: ' + localPath);
@@ -366,7 +336,8 @@ app.get('/api/campaign/:productName/compare', async (req, res) => {
                     filenameStr = path.basename(localPath);
                     modTime = fs.statSync(localPath).mtime.toISOString();
                 } else {
-                    // Regular OneDrive flow
+                    if (!process.env.MS_ACCESS_TOKEN) throw new Error('MS_ACCESS_TOKEN missing');
+                    
                     const metaUrl = `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}`;
                     const metaRes = await axios.get(metaUrl, {
                         headers: { 'Authorization': `Bearer ${process.env.MS_ACCESS_TOKEN}` }
@@ -382,37 +353,24 @@ app.get('/api/campaign/:productName/compare', async (req, res) => {
                     fileBuffer = response.data;
                 }
 
-                // Parse Excel buffer
                 const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
                 const sheets = [];
 
-                // 4. Process each sheet
                 workbook.SheetNames.forEach(sheetName => {
                     const worksheet = workbook.Sheets[sheetName];
                     const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-                    
-                    if (rawData.length > 0) {
-                        sheets.push({ name: sheetName, rawData: rawData });
-                    }
+                    if (rawData.length > 0) sheets.push({ name: sheetName, rawData });
                 });
 
-                reports.push({
-                    onedrive_id: fileId,
-                    name: filenameStr,
-                    time: modTime,
-                    sheets: sheets
-                });
-                
+                reports.push({ onedrive_id: fileId, name: filenameStr, time: modTime, sheets });
             } catch (err) {
                 console.error(`Error processing file ${fileId}:`, err.message);
                 reports.push({ onedrive_id: fileId, error: err.message });
             }
         }
 
-        // Return ordered chronologically by time
         reports.sort((a, b) => new Date(a.time) - new Date(b.time));
         res.json(reports);
-
     } catch (err) {
         console.error('Error in compare endpoint:', err.message);
         res.status(500).json({ error: 'Failed to generate comparison', detail: err.message });

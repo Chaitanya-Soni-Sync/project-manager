@@ -31,45 +31,6 @@ def get_attachment(service, msg_id, attachment_id):
         return base64.urlsafe_b64decode(data)
     return None
 
-def download_thread_attachments(thread_id):
-    """
-    Downloads all attachments from all messages in a thread.
-    Returns a list of local file paths.
-    """
-    service = get_gmail_service()
-    thread = service.users().threads().get(userId='me', id=thread_id).execute()
-    messages = thread.get('messages', [])
-    
-    downloaded_files = []
-    
-    for msg in messages:
-        msg_id = msg['id']
-        message = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-        payload = message.get('payload', {})
-        
-        parts = [payload]
-        while parts:
-            part = parts.pop()
-            if part.get('parts'):
-                parts.extend(part.get('parts'))
-            
-            filename = part.get('filename')
-            body = part.get('body', {})
-            attachment_id = body.get('attachmentId')
-            
-            if filename and attachment_id:
-                print(f"Downloading attachment for cumulative report: {filename}")
-                file_data = get_attachment(service, msg_id, attachment_id)
-                if file_data:
-                    local_path = os.path.join(TEMP_DOWNLOAD_DIR, filename)
-                    # Avoid overwriting if multiple messages have same filename, though unlikely to matter for sync
-                    with open(local_path, 'wb') as f:
-                        f.write(file_data)
-                    if local_path not in downloaded_files:
-                        downloaded_files.append(local_path)
-    
-    return downloaded_files
-
 def parse_email_content(msg_id):
     """
     Parses an email for sender, subject, attachments, and Google Drive links.
@@ -82,6 +43,9 @@ def parse_email_content(msg_id):
     
     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
     sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
+    to = next((h['value'] for h in headers if h['name'] == 'To'), '')
+    cc = next((h['value'] for h in headers if h['name'] == 'Cc'), '')
+    date_header = next((h['value'] for h in headers if h['name'] == 'Date'), None)
     
     files_to_process = []
     
@@ -140,6 +104,9 @@ def parse_email_content(msg_id):
         'threadId': message.get('threadId'),
         'product_name': extract_product_name(subject),
         'sender': sender,
+        'to': to,
+        'cc': cc,
+        'date': date_header,
         'subject': subject,
         'body': body_text,
         'files': files_to_process

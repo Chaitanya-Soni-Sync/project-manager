@@ -1,14 +1,13 @@
 import os
 import datetime
 import traceback
+import pandas as pd
 from src.email_client import fetch_unread_project_emails, parse_email_content, mark_as_read
 from src.drive_client import download_file_from_drive
 from src.onedrive_client import upload_file_to_onedrive, create_share_link, get_category_from_extension
 from src.sheets_client import log_activity
-from src.campaign_manager import process_campaign_email, check_reminders, is_internal_only
+from src.campaign_manager import process_campaign_email, check_reminders
 from src.config import TEAM_DOMAIN
-
-import pandas as pd
 
 def extract_impressions_from_file(file_path):
     """
@@ -39,7 +38,6 @@ def extract_impressions_from_file(file_path):
         date_cols = [c for c in df.columns if 'date' in c]
         if date_cols:
             try:
-                # Convert to datetime, coerce errors to NaT
                 dates = pd.to_datetime(df[date_cols[0]], errors='coerce').dropna()
                 if not dates.empty:
                     metrics['start_date'] = dates.min().strftime("%Y-%m-%d")
@@ -62,7 +60,7 @@ def extract_impressions_from_file(file_path):
             metrics['total_impressions'] = str(total_sum)
             
     except Exception as e:
-        print(f"Failed to extract structured metrics from {file_path}: {e}")
+        print(f"Failed to extract metrics from {file_path}: {e}")
         
     return metrics
 
@@ -74,55 +72,36 @@ def process_single_email(msg_id):
         # 1. Parse Email
         print(f"[{timestamp}] Processing message ID: {msg_id}")
         email_data = parse_email_content(msg_id)
-        thread_id = email_data.get('threadId')
         
-        # 2. Check for internal-only threads early
-        if is_internal_only(thread_id):
-            print(f"Purging internal-only thread: {thread_id}")
-            mark_as_read(msg_id)
-            return
-
-        # 3. Pre-process files for metrics
+        # 2. Pre-process files for metrics
         combined_metrics = {
-            'total_impressions': "TBD",
-            'media_breakdown': [],
-            'ltv_spots': 0,
-            'start_date': "TBD",
-            'end_date': "TBD"
+            'total_impressions': "TBD", 'media_breakdown': [], 'ltv_spots': 0, 'start_date': "TBD", 'end_date': "TBD"
         }
+        onedrive_id_map = {}
         
         email_items = email_data['files']
         for item in email_items:
-            if item['type'] == 'attachment' and item['name'].lower().endswith(('.xlsx', '.csv')):
-                file_metrics = extract_impressions_from_file(item['path'])
-                
-                # Merge logic (take values if better than TBD)
-                if file_metrics['total_impressions'] != "TBD":
-                    combined_metrics['total_impressions'] = file_metrics['total_impressions']
-                combined_metrics['media_breakdown'].extend(file_metrics['media_breakdown'])
-                combined_metrics['ltv_spots'] += file_metrics['ltv_spots']
-                if file_metrics['start_date'] != "TBD":
-                    combined_metrics['start_date'] = file_metrics['start_date']
-                if file_metrics['end_date'] != "TBD":
-                    combined_metrics['end_date'] = file_metrics['end_date']
-                
-                # Attach source file info for logging
-                item['metrics'] = file_metrics
-
-        onedrive_id_map = {}
-        for item in email_items:
             try:
-                # 4. Handle File Download (if Drive link)
+                # 3. Handle File Download (if Drive link)
                 if item['type'] == 'drive_link':
                     print(f"Downloading from Drive: {item['drive_id']}")
                     drive_file = download_file_from_drive(item['drive_id'])
                     item['path'] = drive_file['path']
                     item['name'] = drive_file['name']
 
+                # 4. Metrics Extraction
+                if item.get('path') and item['name'].lower().endswith(('.xlsx', '.csv')):
+                    file_metrics = extract_impressions_from_file(item['path'])
+                    item['metrics'] = file_metrics
+                    # Merge logic
+                    if file_metrics['total_impressions'] != "TBD": combined_metrics['total_impressions'] = file_metrics['total_impressions']
+                    combined_metrics['media_breakdown'].extend(file_metrics['media_breakdown'])
+                    combined_metrics['ltv_spots'] += file_metrics['ltv_spots']
+                    if file_metrics['start_date'] != "TBD": combined_metrics['start_date'] = file_metrics['start_date']
+                    if file_metrics['end_date'] != "TBD": combined_metrics['end_date'] = file_metrics['end_date']
+
                 # 5. Categorize & Upload to OneDrive
                 product_name = email_data.get('product_name', 'General')
-                
-                # SPECIAL DETECTION: Analysis from Team to Client
                 is_team_file = TEAM_DOMAIN.lower() in email_data['sender'].lower()
                 is_excel = item['name'].lower().endswith(('.xlsx', '.xls', '.csv'))
                 
@@ -131,8 +110,7 @@ def process_single_email(msg_id):
                 else:
                     category = get_category_from_extension(item['name'])
                     
-                print(f"Uploading {item['name']} (Category: {category}) to OneDrive folder for {product_name}...")
-                
+                print(f"Uploading {item['name']} (Category: {category}) to OneDrive for {product_name}...")
                 onedrive_response = upload_file_to_onedrive(item['path'], product_name, category)
                 item['onedrive_id'] = onedrive_response.get('id')
                 onedrive_id_map[item['name']] = item['onedrive_id']
@@ -140,41 +118,17 @@ def process_single_email(msg_id):
                 # 6. Create Shareable Link
                 onedrive_link = create_share_link(item['onedrive_id'])
                 item['onedrive_link'] = onedrive_link
-                print(f"Generated OneDrive Link: {onedrive_link}")
+                log_activity(timestamp, email_data['subject'], item['name'], category, onedrive_link)
                 
-                # 7. Log Activity to Sheets
-                log_activity(
-                    timestamp=timestamp,
-                    email_subject=email_data['subject'],
-                    file_name=item['name'],
-                    category=category,
-                    onedrive_link=onedrive_link,
-                    status="Success"
-                )
-                
-                # 8. Cleanup Local File
-                if os.path.exists(item['path']):
-                    os.remove(item['path'])
-                    print(f"Cleaned up {item['name']}.")
+                # 7. Cleanup
+                if os.path.exists(item['path']): os.remove(item['path'])
                     
             except Exception as e:
-                print(f"Error processing item {item.get('name', 'unknown')}: {e}")
-                traceback.print_exc()
-                log_activity(
-                    timestamp=timestamp,
-                    email_subject=email_data['subject'],
-                    file_name=item.get('name', 'Unknown'),
-                    category="Error",
-                    onedrive_link="N/A",
-                    status=f"Failed: {str(e)}"
-                )
+                print(f"Error processing item {item.get('name')}: {e}")
 
-        # 9. Campaign Workflow Management & Stakeholder Alerting
+        # 8. Final Campaign Lifecycle Sync
         process_campaign_email(msg_id, metrics=combined_metrics, onedrive_ids=onedrive_id_map)
-
-        # 10. Mark Email as Read
         mark_as_read(msg_id)
-        print(f"Finished processing message {msg_id}.")
         
     except Exception as e:
         print(f"Failed to process email {msg_id}: {e}")
@@ -183,16 +137,11 @@ def process_single_email(msg_id):
 def run_processor():
     """Main workflow to poll and process emails."""
     print(f"--- Starting Processing Run: {datetime.datetime.now()} ---")
-    
-    # Check for analysis reminders first
     check_reminders()
-
     messages = fetch_unread_project_emails()
     print(f"Found {len(messages)} unread messages.")
-    
     for msg in messages:
         process_single_email(msg['id'])
-    
     print(f"--- Processing Run Complete: {datetime.datetime.now()} ---\n")
 
 if __name__ == "__main__":
